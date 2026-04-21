@@ -27,6 +27,7 @@ set(SOURCES
     src/memory_store.cpp
     src/decision_engine.cpp
     src/context_manager.cpp
+    src/tensor.cpp
 )
 
 # Executable
@@ -98,7 +99,17 @@ add_executable(context_test
 target_include_directories(context_test PRIVATE 
     ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
-target_link_libraries(context_test PRIVATE Threads::Threads sqlite3)
+# Tensor test executable
+add_executable(tensor_test
+    src/tensor_test.cpp
+    src/logger.cpp
+    src/tensor.cpp
+)
+
+target_include_directories(tensor_test PRIVATE 
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+target_link_libraries(tensor_test PRIVATE Threads::Threads)
 
 # Installation
 install(TARGETS ash_engine DESTINATION bin)
