@@ -26,6 +26,8 @@ struct TensorShape {
     
     TensorShape() = default;
     TensorShape(std::initializer_list<int64_t> d) : dims(d) {}
+    TensorShape(const std::vector<int64_t>& d) : dims(d) {}
+    TensorShape(std::vector<int64_t>&& d) : dims(std::move(d)) {}
     
     // Get number of dimensions
     size_t ndim() const { return dims.size(); }
