@@ -250,6 +250,14 @@ int64_t GGUFParser::get_int(const std::string& key, int64_t default_val) const {
     return default_val;
 }
 
+float GGUFParser::get_float(const std::string& key, float default_val) const {
+    GGUFMetadataValue val;
+    if (get_metadata(key, val)) {
+        return val.float_value;
+    }
+    return default_val;
+}
+
 const GGUFTensorInfo* GGUFParser::find_tensor(const std::string& name) const {
     for (const auto& info : tensor_infos_) {
         if (info.name == name) {

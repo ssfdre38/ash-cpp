@@ -92,6 +92,7 @@ public:
     std::string get_string(const std::string& key, const std::string& default_val = "") const;
     uint64_t get_uint(const std::string& key, uint64_t default_val = 0) const;
     int64_t get_int(const std::string& key, int64_t default_val = 0) const;
+    float get_float(const std::string& key, float default_val = 0.0f) const;
     
     // Get all tensor infos
     const std::vector<GGUFTensorInfo>& get_tensors() const { return tensor_infos_; }
