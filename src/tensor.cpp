@@ -190,6 +190,16 @@ std::string Tensor::info() const {
     return ss.str();
 }
 
+Tensor Tensor::clone() const {
+    if (!is_allocated()) {
+        return Tensor();
+    }
+    
+    Tensor copy = Tensor::empty(shape_, dtype_);
+    std::memcpy(copy.data(), data_, size_bytes());
+    return copy;
+}
+
 // Dtype utilities
 size_t dtype_size(DType dtype) {
     switch (dtype) {

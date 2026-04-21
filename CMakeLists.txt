@@ -32,6 +32,7 @@ set(SOURCES
     src/gguf_parser.cpp
     src/tokenizer.cpp
     src/attention.cpp
+    src/inference.cpp
 )
 
 # Executable
@@ -168,6 +169,23 @@ target_include_directories(attention_test PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 target_link_libraries(attention_test PRIVATE Threads::Threads)
+
+# Inference test executable
+add_executable(inference_test
+    src/inference_test.cpp
+    src/logger.cpp
+    src/tensor.cpp
+    src/matrix_ops.cpp
+    src/gguf_parser.cpp
+    src/tokenizer.cpp
+    src/attention.cpp
+    src/inference.cpp
+)
+
+target_include_directories(inference_test PRIVATE 
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+target_link_libraries(inference_test PRIVATE Threads::Threads)
 
 # Installation
 install(TARGETS ash_engine DESTINATION bin)

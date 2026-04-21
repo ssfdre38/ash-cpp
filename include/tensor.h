@@ -83,6 +83,12 @@ public:
     // Check if allocated
     bool is_allocated() const { return data_ != nullptr; }
     
+    // Number of elements
+    int64_t num_elements() const { return shape_.numel(); }
+    
+    // Clone tensor (deep copy)
+    Tensor clone() const;
+    
     // Dequantize to F32 (if quantized)
     Tensor dequantize() const;
     
