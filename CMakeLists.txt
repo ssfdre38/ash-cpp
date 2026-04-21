@@ -187,6 +187,22 @@ target_include_directories(inference_test PRIVATE
 )
 target_link_libraries(inference_test PRIVATE Threads::Threads)
 
+# Persona test executable
+add_executable(persona_test
+    src/persona_test.cpp
+    src/logger.cpp
+    src/emotional_state.cpp
+    src/event_loop.cpp
+    src/memory_store.cpp
+    src/context_manager.cpp
+    src/persona.cpp
+)
+
+target_include_directories(persona_test PRIVATE 
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+target_link_libraries(persona_test PRIVATE Threads::Threads sqlite3)
+
 # Installation
 install(TARGETS ash_engine DESTINATION bin)
 
