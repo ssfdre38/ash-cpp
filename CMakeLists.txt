@@ -25,6 +25,8 @@ set(SOURCES
     src/model_loader.cpp
     src/emotional_state.cpp
     src/memory_store.cpp
+    src/decision_engine.cpp
+    src/context_manager.cpp
 )
 
 # Executable
@@ -84,7 +86,19 @@ add_executable(decision_test
 target_include_directories(decision_test PRIVATE 
     ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
-target_link_libraries(decision_test PRIVATE Threads::Threads sqlite3)
+# Context test executable
+add_executable(context_test
+    src/context_test.cpp
+    src/logger.cpp
+    src/memory_store.cpp
+    src/emotional_state.cpp
+    src/context_manager.cpp
+)
+
+target_include_directories(context_test PRIVATE 
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+target_link_libraries(context_test PRIVATE Threads::Threads sqlite3)
 
 # Installation
 install(TARGETS ash_engine DESTINATION bin)
