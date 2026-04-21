@@ -30,6 +30,7 @@ set(SOURCES
     src/tensor.cpp
     src/matrix_ops.cpp
     src/gguf_parser.cpp
+    src/tokenizer.cpp
 )
 
 # Executable
@@ -138,6 +139,20 @@ target_include_directories(gguf_parser_test PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 target_link_libraries(gguf_parser_test PRIVATE Threads::Threads)
+
+# Tokenizer test executable
+add_executable(tokenizer_test
+    src/tokenizer_test.cpp
+    src/logger.cpp
+    src/tensor.cpp
+    src/gguf_parser.cpp
+    src/tokenizer.cpp
+)
+
+target_include_directories(tokenizer_test PRIVATE 
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+target_link_libraries(tokenizer_test PRIVATE Threads::Threads)
 
 # Installation
 install(TARGETS ash_engine DESTINATION bin)
