@@ -34,17 +34,17 @@ public:
         float score = 0.5f; // Base: neutral
         
         // Emotional factors
-        score += state.curiosity * 0.3f;        // Curious → want to respond
-        score += state.excitement * 0.2f;       // Excited → more talkative
-        score += state.satisfaction * 0.1f;     // Satisfied → engaged
-        score -= state.frustration * 0.3f;      // Frustrated → less engaged
-        score -= (1.0f - state.energy) * 0.2f;  // Low energy → less likely
+        score += state.get(EmotionType::CURIOSITY) * 0.3f;        // Curious → want to respond
+        score += state.get(EmotionType::EXCITEMENT) * 0.2f;       // Excited → more talkative
+        score += state.get(EmotionType::SATISFACTION) * 0.1f;     // Satisfied → engaged
+        score -= state.get(EmotionType::FRUSTRATION) * 0.3f;      // Frustrated → less engaged
+        score -= (1.0f - state.get(EmotionType::ENERGY)) * 0.2f;  // Low energy → less likely
         
         // Trigger-based adjustments
         if (trigger == DecisionTrigger::MESSAGE_RECEIVED) {
             score += 0.2f; // Direct message → more likely to respond
         }
-        if (trigger == DecisionTrigger::EMOTIONAL_SHIFT && state.curiosity > 0.7f) {
+        if (trigger == DecisionTrigger::EMOTIONAL_SHIFT && state.get(EmotionType::CURIOSITY) > 0.7f) {
             score += 0.15f; // Emotional shift with high curiosity → want to engage
         }
         
@@ -72,13 +72,13 @@ public:
         float score = 0.0f; // Base: don't initiate (requires strong motivation)
         
         // Emotional factors (stronger thresholds than SPEAK)
-        if (state.excitement > config_.excitement_threshold) {
+        if (state.get(EmotionType::EXCITEMENT) > config_.excitement_threshold) {
             score += 0.4f; // High excitement → want to share
         }
-        if (state.curiosity > config_.curiosity_threshold && state.social_desire > 0.6f) {
+        if (state.get(EmotionType::CURIOSITY) > config_.curiosity_threshold && state.get(EmotionType::SOCIAL_DESIRE) > 0.6f) {
             score += 0.3f; // Curious + social → want to engage
         }
-        if (state.energy > config_.high_energy_threshold) {
+        if (state.get(EmotionType::ENERGY) > config_.high_energy_threshold) {
             score += 0.2f; // High energy → more likely to be active
         }
         
@@ -92,10 +92,10 @@ public:
         }
         
         // Low energy or high frustration → don't initiate
-        if (state.energy < config_.low_energy_threshold) {
+        if (state.get(EmotionType::ENERGY) < config_.low_energy_threshold) {
             score -= 0.5f;
         }
-        if (state.frustration > config_.frustration_threshold) {
+        if (state.get(EmotionType::FRUSTRATION) > config_.frustration_threshold) {
             score -= 0.4f;
         }
         
@@ -109,15 +109,15 @@ public:
         float score = 0.3f; // Base: some background thinking
         
         // High focus or satisfaction → good time to consolidate memories
-        if (state.focus > 0.6f) {
+        if (state.get(EmotionType::FOCUS) > 0.6f) {
             score += 0.2f;
         }
-        if (state.satisfaction > 0.7f) {
+        if (state.get(EmotionType::SATISFACTION) > 0.7f) {
             score += 0.15f;
         }
         
         // Low energy → prefer thinking over active engagement
-        if (state.energy < config_.low_energy_threshold) {
+        if (state.get(EmotionType::ENERGY) < config_.low_energy_threshold) {
             score += 0.25f;
         }
         
@@ -131,17 +131,17 @@ public:
         float score = 0.2f; // Base: low (Ash is generally active)
         
         // Very low energy → need rest
-        if (state.energy < 0.2f) {
+        if (state.get(EmotionType::ENERGY) < 0.2f) {
             score += 0.6f;
         }
         
         // High frustration + low satisfaction → need break
-        if (state.frustration > 0.7f && state.satisfaction < 0.3f) {
+        if (state.get(EmotionType::FRUSTRATION) > 0.7f && state.get(EmotionType::SATISFACTION) < 0.3f) {
             score += 0.3f;
         }
         
         // Low curiosity + low excitement → nothing interesting happening
-        if (state.curiosity < 0.3f && state.excitement < 0.3f) {
+        if (state.get(EmotionType::CURIOSITY) < 0.3f && state.get(EmotionType::EXCITEMENT) < 0.3f) {
             score += 0.2f;
         }
         
@@ -157,7 +157,7 @@ public:
         float score = 0.3f; // Base: moderate (memories are useful)
         
         // High curiosity → want to recall related memories
-        if (state.curiosity > 0.6f) {
+        if (state.get(EmotionType::CURIOSITY) > 0.6f) {
             score += 0.2f;
         }
         
@@ -242,7 +242,7 @@ DecisionEngine::DecisionEngine(
     std::shared_ptr<MemoryStore> memories,
     const DecisionConfig& config
 ) : impl_(std::make_unique<Impl>(emotions, memories, config)) {
-    Logger::info("🧠 Decision engine initialized");
+    Logger::instance().info("🧠 Decision engine initialized");
 }
 
 // Destructor
@@ -278,27 +278,27 @@ bool DecisionEngine::should_speak(
     auto state = impl_->emotions_->get_state();
     
     // Quick response if conversation is active and energy is good
-    if (time_since < impl_->config_.respond_quickly_under && state.energy > 0.5f) {
+    if (time_since < impl_->config_.respond_quickly_under && state.get(EmotionType::ENERGY) > 0.5f) {
         return true;
     }
     
     // Check emotional state
-    if (state.frustration > impl_->config_.frustration_threshold) {
+    if (state.get(EmotionType::FRUSTRATION) > impl_->config_.frustration_threshold) {
         return false; // Too frustrated to engage
     }
     
-    if (state.energy < impl_->config_.low_energy_threshold) {
+    if (state.get(EmotionType::ENERGY) < impl_->config_.low_energy_threshold) {
         return false; // Too tired
     }
     
     // High curiosity or excitement → likely to speak
-    if (state.curiosity > impl_->config_.curiosity_threshold ||
-        state.excitement > impl_->config_.excitement_threshold) {
+    if (state.get(EmotionType::CURIOSITY) > impl_->config_.curiosity_threshold ||
+        state.get(EmotionType::EXCITEMENT) > impl_->config_.excitement_threshold) {
         return true;
     }
     
     // Default: moderate likelihood (let decide() make final call)
-    return state.energy > 0.4f && state.curiosity > 0.4f;
+    return state.get(EmotionType::ENERGY) > 0.4f && state.get(EmotionType::CURIOSITY) > 0.4f;
 }
 
 // Should Ash initiate conversation?
@@ -317,14 +317,14 @@ bool DecisionEngine::should_initiate_conversation(
     auto state = impl_->emotions_->get_state();
     
     // Need high energy and motivation to initiate
-    if (state.energy < impl_->config_.high_energy_threshold) {
+    if (state.get(EmotionType::ENERGY) < impl_->config_.high_energy_threshold) {
         return false;
     }
     
     // Need strong emotional motivation
-    bool high_excitement = state.excitement > impl_->config_.excitement_threshold;
-    bool curious_and_social = state.curiosity > impl_->config_.curiosity_threshold && 
-                             state.social_desire > 0.6f;
+    bool high_excitement = state.get(EmotionType::EXCITEMENT) > impl_->config_.excitement_threshold;
+    bool curious_and_social = state.get(EmotionType::CURIOSITY) > impl_->config_.curiosity_threshold && 
+                             state.get(EmotionType::SOCIAL_DESIRE) > 0.6f;
     
     return high_excitement || curious_and_social;
 }
@@ -398,3 +398,4 @@ void DecisionEngine::update_config(const DecisionConfig& config) {
 }
 
 } // namespace ash
+

@@ -72,7 +72,19 @@ find_package(Threads REQUIRED)
 target_link_libraries(ash_engine PRIVATE Threads::Threads sqlite3)
 target_link_libraries(model_test PRIVATE Threads::Threads)
 target_link_libraries(emotional_test PRIVATE Threads::Threads)
-target_link_libraries(memory_test PRIVATE Threads::Threads sqlite3)
+# Decision test executable
+add_executable(decision_test
+    src/decision_test.cpp
+    src/logger.cpp
+    src/memory_store.cpp
+    src/emotional_state.cpp
+    src/decision_engine.cpp
+)
+
+target_include_directories(decision_test PRIVATE 
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+target_link_libraries(decision_test PRIVATE Threads::Threads sqlite3)
 
 # Installation
 install(TARGETS ash_engine DESTINATION bin)
