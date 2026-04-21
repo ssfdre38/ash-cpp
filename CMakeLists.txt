@@ -28,6 +28,7 @@ set(SOURCES
     src/decision_engine.cpp
     src/context_manager.cpp
     src/tensor.cpp
+    src/matrix_ops.cpp
 )
 
 # Executable
@@ -110,6 +111,19 @@ target_include_directories(tensor_test PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 target_link_libraries(tensor_test PRIVATE Threads::Threads)
+
+# Matrix operations test executable
+add_executable(matrix_ops_test
+    src/matrix_ops_test.cpp
+    src/logger.cpp
+    src/tensor.cpp
+    src/matrix_ops.cpp
+)
+
+target_include_directories(matrix_ops_test PRIVATE 
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+target_link_libraries(matrix_ops_test PRIVATE Threads::Threads)
 
 # Installation
 install(TARGETS ash_engine DESTINATION bin)
