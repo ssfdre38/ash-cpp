@@ -31,6 +31,7 @@ set(SOURCES
     src/matrix_ops.cpp
     src/gguf_parser.cpp
     src/tokenizer.cpp
+    src/attention.cpp
 )
 
 # Executable
@@ -153,6 +154,20 @@ target_include_directories(tokenizer_test PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 target_link_libraries(tokenizer_test PRIVATE Threads::Threads)
+
+# Attention test executable
+add_executable(attention_test
+    src/attention_test.cpp
+    src/logger.cpp
+    src/tensor.cpp
+    src/matrix_ops.cpp
+    src/attention.cpp
+)
+
+target_include_directories(attention_test PRIVATE 
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+target_link_libraries(attention_test PRIVATE Threads::Threads)
 
 # Installation
 install(TARGETS ash_engine DESTINATION bin)

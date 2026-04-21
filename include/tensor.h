@@ -66,6 +66,9 @@ public:
     // Create zero-filled tensor
     static Tensor zeros(TensorShape shape, DType dtype);
     
+    // Create one-filled tensor
+    static Tensor ones(TensorShape shape, DType dtype);
+    
     // Access
     const TensorShape& shape() const { return shape_; }
     DType dtype() const { return dtype_; }

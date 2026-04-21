@@ -81,6 +81,18 @@ Tensor Tensor::zeros(TensorShape shape, DType dtype) {
     return t;
 }
 
+Tensor Tensor::ones(TensorShape shape, DType dtype) {
+    Tensor t(shape, dtype);
+    if (dtype == DType::F32) {
+        float* data = t.data_f32();
+        int64_t n = t.shape().numel();
+        for (int64_t i = 0; i < n; ++i) {
+            data[i] = 1.0f;
+        }
+    }
+    return t;
+}
+
 size_t Tensor::size_bytes() const {
     int64_t n = shape_.numel();
     
