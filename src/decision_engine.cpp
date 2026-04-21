@@ -229,8 +229,8 @@ public:
             case DecisionType::RECALL: type_str = "RECALL"; break;
         }
         
-        Logger::debug("Decision: {} (confidence: {:.2f}) - {}", 
-            type_str, confidence, decision.reasoning);
+        Logger::instance().debug("Decision: " + std::string(type_str) + 
+            " (confidence: " + std::to_string(confidence) + ") - " + decision.reasoning);
         
         return decision;
     }
@@ -253,16 +253,16 @@ Decision DecisionEngine::decide(
     DecisionTrigger trigger,
     const std::string& context
 ) {
-    auto state = impl_->emotions_->get_state();
+    auto state = impl_->emotions_->get_current_state();
     
     // Score all decision options
     std::vector<std::pair<DecisionType, float>> scores;
     
-    scores.push_back({DecisionType::SPEAK, impl_->score_speak_decision(trigger, context, state)});
-    scores.push_back({DecisionType::INITIATE, impl_->score_initiate_decision(state, 0.0f)}); // TODO: time tracking
-    scores.push_back({DecisionType::THINK, impl_->score_think_decision(state)});
-    scores.push_back({DecisionType::IDLE, impl_->score_idle_decision(state)});
-    scores.push_back({DecisionType::RECALL, impl_->score_recall_decision(trigger, context, state)});
+    scores.push_back(std::make_pair(DecisionType::SPEAK, impl_->score_speak_decision(trigger, context, state)));
+    scores.push_back(std::make_pair(DecisionType::INITIATE, impl_->score_initiate_decision(state, 0.0f))); // TODO: time tracking
+    scores.push_back(std::make_pair(DecisionType::THINK, impl_->score_think_decision(state)));
+    scores.push_back(std::make_pair(DecisionType::IDLE, impl_->score_idle_decision(state)));
+    scores.push_back(std::make_pair(DecisionType::RECALL, impl_->score_recall_decision(trigger, context, state)));
     
     return impl_->build_decision(scores, context);
 }
@@ -275,7 +275,7 @@ bool DecisionEngine::should_speak(
     auto now = std::chrono::system_clock::now();
     auto time_since = std::chrono::duration_cast<std::chrono::seconds>(now - last_message_time).count();
     
-    auto state = impl_->emotions_->get_state();
+    auto state = impl_->emotions_->get_current_state();
     
     // Quick response if conversation is active and energy is good
     if (time_since < impl_->config_.respond_quickly_under && state.get(EmotionType::ENERGY) > 0.5f) {
@@ -314,7 +314,7 @@ bool DecisionEngine::should_initiate_conversation(
         return false;
     }
     
-    auto state = impl_->emotions_->get_state();
+    auto state = impl_->emotions_->get_current_state();
     
     // Need high energy and motivation to initiate
     if (state.get(EmotionType::ENERGY) < impl_->config_.high_energy_threshold) {
@@ -335,7 +335,7 @@ float DecisionEngine::calculate_confidence(
     DecisionTrigger trigger,
     const std::string& context
 ) const {
-    auto state = impl_->emotions_->get_state();
+    auto state = impl_->emotions_->get_current_state();
     
     switch (type) {
         case DecisionType::SPEAK:
@@ -394,8 +394,9 @@ const DecisionConfig& DecisionEngine::get_config() const {
 // Update config
 void DecisionEngine::update_config(const DecisionConfig& config) {
     impl_->config_ = config;
-    Logger::info("Decision config updated");
+    Logger::instance().info("Decision config updated");
 }
 
 } // namespace ash
+
 
