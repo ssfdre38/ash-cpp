@@ -1,4 +1,5 @@
 #include "tensor.h"
+#include "memory_lock.h"  // Full definition needed for ScopedMemoryLock
 #include "logger.h"
 #include <cstring>
 #include <cstdlib>
@@ -198,6 +199,35 @@ Tensor Tensor::clone() const {
     Tensor copy = Tensor::empty(shape_, dtype_);
     std::memcpy(copy.data(), data_, size_bytes());
     return copy;
+}
+
+bool Tensor::lock_memory() {
+    if (!data_ || !owns_data_) {
+        return false;
+    }
+    
+    if (memory_locked_) {
+        return true;  // Already locked
+    }
+    
+    size_t bytes = size_bytes();
+    memory_lock_ = std::make_unique<ScopedMemoryLock>(data_, bytes);
+    memory_locked_ = memory_lock_->is_locked();
+    
+    if (!memory_locked_) {
+        Logger::instance().warning("Failed to lock tensor memory: " + memory_lock_->error());
+    } else {
+        Logger::instance().debug("Locked tensor memory: " + std::to_string(bytes) + " bytes");
+    }
+    
+    return memory_locked_;
+}
+
+void Tensor::unlock_memory() {
+    if (memory_lock_) {
+        memory_lock_.reset();
+        memory_locked_ = false;
+    }
 }
 
 // Dtype utilities

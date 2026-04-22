@@ -33,6 +33,7 @@ set(SOURCES
     src/tokenizer.cpp
     src/attention.cpp
     src/inference.cpp
+    src/memory_lock.cpp
 )
 
 # Executable
@@ -202,6 +203,19 @@ target_include_directories(persona_test PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 target_link_libraries(persona_test PRIVATE Threads::Threads sqlite3)
+
+# Memory lock test
+add_executable(memory_lock_test
+    src/memory_lock_test.cpp
+    src/memory_lock.cpp
+    src/tensor.cpp
+    src/logger.cpp
+)
+
+target_include_directories(memory_lock_test PRIVATE 
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+target_link_libraries(memory_lock_test PRIVATE Threads::Threads)
 
 # Installation
 install(TARGETS ash_engine DESTINATION bin)

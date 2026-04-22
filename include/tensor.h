@@ -1,9 +1,12 @@
 #pragma once
 
-#include <vector>
 #include <cstdint>
+#include <vector>
 #include <string>
 #include <memory>
+
+// Forward declare memory lock class outside ash namespace first
+namespace ash { class ScopedMemoryLock; }
 
 namespace ash {
 
@@ -89,6 +92,11 @@ public:
     // Clone tensor (deep copy)
     Tensor clone() const;
     
+    // Memory locking (prevents OS from swapping to disk)
+    bool lock_memory();
+    void unlock_memory();
+    bool is_memory_locked() const { return memory_locked_; }
+    
     // Dequantize to F32 (if quantized)
     Tensor dequantize() const;
     
@@ -100,6 +108,8 @@ private:
     DType dtype_ = DType::F32;
     void* data_ = nullptr;
     bool owns_data_ = true;
+    bool memory_locked_ = false;
+    std::unique_ptr<ScopedMemoryLock> memory_lock_;
     
     // Allocate memory
     void allocate();
