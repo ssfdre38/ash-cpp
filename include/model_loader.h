@@ -41,6 +41,14 @@ enum class QuantizationType {
     UNKNOWN
 };
 
+// Model type for ash-forge routing
+enum class ModelType {
+    ROUTER,      // Scout agent (ash-core) - routes queries
+    SPECIALIST,  // Domain specialist (ash-python, ash-javascript, etc.)
+    PERSONALITY, // Full personality (ash-chat) - autonomous, emotional
+    UNKNOWN
+};
+
 // Model metadata
 struct ModelInfo {
     std::string name;
@@ -58,6 +66,16 @@ struct ModelInfo {
     uint32_t embedding_dim;
     uint32_t num_layers;
     uint32_t num_heads;
+    
+    // Ash-Forge multi-model extensions
+    ModelType type = ModelType::UNKNOWN;
+    std::vector<std::string> categories;  // ["python", "pip", "django"] for specialists
+    bool always_loaded = false;           // true for ash-core router
+    int priority = 50;                    // Higher = keep loaded longer (0-100)
+    
+    // Usage tracking (for LRU eviction)
+    mutable time_t last_used = 0;         // Timestamp of last use
+    mutable size_t query_count = 0;       // Number of queries handled
 };
 
 // Abstract model interface
@@ -164,11 +182,12 @@ private:
     std::unique_ptr<Impl> impl_;
 };
 
-// Model registry - tracks loaded models
+// Model registry - tracks loaded models (enhanced for ash-forge multi-model)
 class ModelRegistry {
 public:
     static ModelRegistry& instance();
     
+    // ===== Original API (preserved) =====
     // Register a loaded model
     void register_model(const std::string& name, std::unique_ptr<IModel> model);
     
@@ -187,12 +206,41 @@ public:
     // Get total memory usage
     size_t get_total_memory_usage() const;
     
+    // ===== Ash-Forge Multi-Model Extensions =====
+    
+    // Discover available models in directory
+    std::vector<ModelInfo> discover_models(const std::string& models_dir);
+    
+    // Load model from file path (auto-creates IModel instance)
+    bool load_model(const std::string& name, const std::string& file_path);
+    
+    // Check if model is currently loaded
+    bool is_loaded(const std::string& name) const;
+    
+    // Get model info without loading (from discovery)
+    ModelInfo get_model_info(const std::string& name) const;
+    
+    // Memory management
+    size_t get_memory_budget() const { return memory_budget_; }
+    void set_memory_budget(size_t bytes) { memory_budget_ = bytes; }
+    bool fits_in_budget(size_t additional_bytes) const;
+    
+    // LRU tracking
+    void mark_model_used(const std::string& name);
+    std::string get_lru_model() const;  // Get least recently used (for eviction)
+    
+    // Automatic memory management
+    bool ensure_space(size_t required_bytes);  // Evict models if needed
+    void cleanup_cold_models(int max_age_seconds = 300);  // Unload old models
+    
 private:
     ModelRegistry();
     ~ModelRegistry();
     
     struct Impl;
     std::unique_ptr<Impl> impl_;
+    
+    size_t memory_budget_ = 12ull * 1024 * 1024 * 1024;  // 12GB default
 };
 
 // Model download utilities

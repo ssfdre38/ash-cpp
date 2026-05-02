@@ -213,6 +213,15 @@ bool GGUFParser::parse(const std::string& file_path) {
     Logger::instance().debug("Tensor data starts at offset: " + std::to_string(tensor_data_offset_));
     Logger::instance().info("✅ GGUF parsed successfully: " + std::to_string(tensor_count_) + " tensors");
     
+    // Debug: Print first 10 tensor names
+    Logger::instance().info("Sample tensor names:");
+    int name_count = 0;
+    for (const auto& info : tensor_infos_) {
+        if (name_count++ < 10) {
+            Logger::instance().info("  - " + info.name);
+        }
+    }
+    
     valid_ = true;
     return true;
 }
@@ -237,7 +246,20 @@ std::string GGUFParser::get_string(const std::string& key, const std::string& de
 uint64_t GGUFParser::get_uint(const std::string& key, uint64_t default_val) const {
     GGUFMetadataValue val;
     if (get_metadata(key, val)) {
-        return val.uint_value;
+        switch (val.type) {
+            case GGUFMetadataType::UINT8:
+            case GGUFMetadataType::UINT16:
+            case GGUFMetadataType::UINT32:
+            case GGUFMetadataType::UINT64:
+                return val.uint_value;
+            case GGUFMetadataType::INT8:
+            case GGUFMetadataType::INT16:
+            case GGUFMetadataType::INT32:
+            case GGUFMetadataType::INT64:
+                return static_cast<uint64_t>(val.int_value);
+            default:
+                return default_val;
+        }
     }
     return default_val;
 }
@@ -245,7 +267,20 @@ uint64_t GGUFParser::get_uint(const std::string& key, uint64_t default_val) cons
 int64_t GGUFParser::get_int(const std::string& key, int64_t default_val) const {
     GGUFMetadataValue val;
     if (get_metadata(key, val)) {
-        return val.int_value;
+        switch (val.type) {
+            case GGUFMetadataType::INT8:
+            case GGUFMetadataType::INT16:
+            case GGUFMetadataType::INT32:
+            case GGUFMetadataType::INT64:
+                return val.int_value;
+            case GGUFMetadataType::UINT8:
+            case GGUFMetadataType::UINT16:
+            case GGUFMetadataType::UINT32:
+            case GGUFMetadataType::UINT64:
+                return static_cast<int64_t>(val.uint_value);
+            default:
+                return default_val;
+        }
     }
     return default_val;
 }
@@ -253,7 +288,18 @@ int64_t GGUFParser::get_int(const std::string& key, int64_t default_val) const {
 float GGUFParser::get_float(const std::string& key, float default_val) const {
     GGUFMetadataValue val;
     if (get_metadata(key, val)) {
-        return val.float_value;
+        switch (val.type) {
+            case GGUFMetadataType::FLOAT32:
+            case GGUFMetadataType::FLOAT64:
+                return static_cast<float>(val.float_value);
+            case GGUFMetadataType::UINT8:
+            case GGUFMetadataType::UINT16:
+            case GGUFMetadataType::UINT32:
+            case GGUFMetadataType::UINT64:
+                return static_cast<float>(val.uint_value);
+            default:
+                return default_val;
+        }
     }
     return default_val;
 }
@@ -365,7 +411,21 @@ uint64_t GGUFParser::get_num_kv_heads() const {
 }
 
 uint64_t GGUFParser::get_vocab_size() const {
-    return get_uint("tokenizer.ggml.token_count", 256000);
+    uint64_t vocab_from_metadata = get_uint("tokenizer.ggml.token_count", 0);
+    
+    // If not in metadata, infer from token_embd.weight tensor shape
+    if (vocab_from_metadata == 0) {
+        auto tensor = find_tensor("token_embd.weight");
+        if (tensor) {
+            // First dimension is vocab size
+            vocab_from_metadata = tensor->dimensions.at(0);
+            Logger::instance().info("Inferred vocab_size from token_embd.weight: " + std::to_string(vocab_from_metadata));
+        } else {
+            vocab_from_metadata = 256000; // Ultimate fallback
+        }
+    }
+    
+    return vocab_from_metadata;
 }
 
 } // namespace ash

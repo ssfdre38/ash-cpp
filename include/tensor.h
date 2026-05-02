@@ -5,9 +5,6 @@
 #include <string>
 #include <memory>
 
-// Forward declare memory lock class outside ash namespace first
-namespace ash { class ScopedMemoryLock; }
-
 namespace ash {
 
 // Data types for tensors
@@ -109,7 +106,7 @@ private:
     void* data_ = nullptr;
     bool owns_data_ = true;
     bool memory_locked_ = false;
-    std::unique_ptr<ScopedMemoryLock> memory_lock_;
+    void* memory_lock_handle_ = nullptr;  // Opaque handle instead of unique_ptr
     
     // Allocate memory
     void allocate();

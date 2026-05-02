@@ -34,6 +34,7 @@ struct ModelConfig {
         config.max_seq_len = max_seq_len;
         config.rope_theta = rope_theta;
         config.use_kv_cache = true;
+        config.architecture = architecture;
         return config;
     }
 };
@@ -66,6 +67,11 @@ struct LayerWeights {
     Tensor wk;  // Key projection
     Tensor wv;  // Value projection
     Tensor wo;  // Output projection
+    
+    // Attention biases (Qwen2 uses these)
+    Tensor bq;  // Query bias
+    Tensor bk;  // Key bias
+    Tensor bv;  // Value bias
     
     // Feed-forward
     Tensor w_gate;  // Gate projection
@@ -104,12 +110,19 @@ public:
     
     // Forward pass through model
     // tokens: [seq_len] input token IDs
+    // start_pos: position in full sequence (for RoPE and KV cache)
     // Returns: [seq_len, vocab_size] logits
-    Tensor forward(const std::vector<TokenID>& tokens, KVCache* kv_cache = nullptr);
+    Tensor forward(const std::vector<TokenID>& tokens, KVCache* kv_cache = nullptr, int start_pos = 0);
     
     // Generate text from prompt
     GenerationResult generate(
         const std::string& prompt,
+        const SamplingConfig& sampling = SamplingConfig()
+    );
+    
+    // Generate from token IDs directly (bypass tokenizer)
+    GenerationResult generate_from_tokens(
+        const std::vector<TokenID>& prompt_tokens,
         const SamplingConfig& sampling = SamplingConfig()
     );
     
@@ -122,6 +135,10 @@ public:
     
     // Get tokenizer
     Tokenizer* tokenizer() { return tokenizer_.get(); }
+    
+    // Helper methods for testing
+    std::vector<TokenID> encode_text(const std::string& text) { return tokenizer_->encode(text); }
+    std::string decode_tokens(const std::vector<TokenID>& tokens) { return tokenizer_->decode(tokens); }
     
     // Sampling methods (exposed for testing)
     TokenID sample_token(const Tensor& logits, const SamplingConfig& config);

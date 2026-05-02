@@ -33,12 +33,16 @@ Tensor matmul(const Tensor& a, const Tensor& b) {
                                  std::to_string(k2) + "," + std::to_string(n) + "]");
     }
     
-    // Ensure F32 (dequantize if needed)
-    Tensor a_f32 = (a.dtype() == DType::F32) ? Tensor::from_data(a.data(), a.shape(), DType::F32) : a.dequantize();
-    Tensor b_f32 = (b.dtype() == DType::F32) ? Tensor::from_data(b.data(), b.shape(), DType::F32) : b.dequantize();
+    // All weights are pre-dequantized at load, activations are created as F32
+    // Verify tensors are F32 (safety check)
+    if (a.dtype() != DType::F32 || b.dtype() != DType::F32) {
+        throw std::runtime_error("matmul: non-F32 tensors not supported (A=" + 
+                                std::to_string(static_cast<int>(a.dtype())) + ", B=" + 
+                                std::to_string(static_cast<int>(b.dtype())) + ")");
+    }
     
-    const float* a_data = a_f32.data_f32();
-    const float* b_data = b_f32.data_f32();
+    const float* a_data = a.data_f32();
+    const float* b_data = b.data_f32();
     
     // Allocate output
     Tensor c = Tensor::zeros({m, n}, DType::F32);
@@ -58,6 +62,92 @@ Tensor matmul(const Tensor& a, const Tensor& b) {
     return c;
 }
 
+// Matrix multiplication with transpose support
+// This is MUCH faster than explicit transpose + matmul
+// Computes: C = op(A) @ op(B) where op(X) is either X or X^T
+Tensor matmul_transposed(const Tensor& a, const Tensor& b, bool transpose_a, bool transpose_b) {
+    check_2d(a, "A");
+    check_2d(b, "B");
+    
+    // Get dimensions based on transpose flags
+    int64_t m = transpose_a ? a.shape().size(1) : a.shape().size(0);
+    int64_t k_a = transpose_a ? a.shape().size(0) : a.shape().size(1);
+    int64_t k_b = transpose_b ? b.shape().size(1) : b.shape().size(0);
+    int64_t n = transpose_b ? b.shape().size(0) : b.shape().size(1);
+    
+    if (k_a != k_b) {
+        throw std::runtime_error("matmul_transposed dimension mismatch: op(A) has k=" + 
+                               std::to_string(k_a) + ", op(B) has k=" + std::to_string(k_b));
+    }
+    int64_t k = k_a;
+    
+    // Verify tensors are F32
+    if (a.dtype() != DType::F32 || b.dtype() != DType::F32) {
+        throw std::runtime_error("matmul_transposed: non-F32 tensors");
+    }
+    
+    const float* a_data = a.data_f32();
+    const float* b_data = b.data_f32();
+    
+    // Original dimensions of A and B for indexing
+    int64_t a_rows = a.shape().size(0);
+    int64_t a_cols = a.shape().size(1);
+    int64_t b_rows = b.shape().size(0);
+    int64_t b_cols = b.shape().size(1);
+    
+    // Allocate output: [m, n]
+    Tensor c = Tensor::zeros({m, n}, DType::F32);
+    float* c_data = c.data_f32();
+    
+    // Optimized loops based on transpose flags
+    // This avoids creating temporary transposed matrices
+    if (!transpose_a && transpose_b) {
+        // Most common case: A @ B^T
+        // A: [m, k], B: [n, k] -> C: [m, n]
+        for (int64_t i = 0; i < m; ++i) {
+            for (int64_t j = 0; j < n; ++j) {
+                float sum = 0.0f;
+                for (int64_t p = 0; p < k; ++p) {
+                    // A[i, p] * B[j, p]  (B transposed)
+                    sum += a_data[i * a_cols + p] * b_data[j * b_cols + p];
+                }
+                c_data[i * n + j] = sum;
+            }
+        }
+    } else if (transpose_a && !transpose_b) {
+        // A^T @ B
+        // A: [k, m], B: [k, n] -> C: [m, n]
+        for (int64_t i = 0; i < m; ++i) {
+            for (int64_t j = 0; j < n; ++j) {
+                float sum = 0.0f;
+                for (int64_t p = 0; p < k; ++p) {
+                    // A[p, i] * B[p, j]  (A transposed)
+                    sum += a_data[p * a_cols + i] * b_data[p * b_cols + j];
+                }
+                c_data[i * n + j] = sum;
+            }
+        }
+    } else if (transpose_a && transpose_b) {
+        // A^T @ B^T
+        // A: [k, m], B: [n, k] -> C: [m, n]
+        for (int64_t i = 0; i < m; ++i) {
+            for (int64_t j = 0; j < n; ++j) {
+                float sum = 0.0f;
+                for (int64_t p = 0; p < k; ++p) {
+                    // A[p, i] * B[j, p]  (both transposed)
+                    sum += a_data[p * a_cols + i] * b_data[j * b_cols + p];
+                }
+                c_data[i * n + j] = sum;
+            }
+        }
+    } else {
+        // No transpose - use standard matmul
+        return matmul(a, b);
+    }
+    
+    return c;
+}
+
 // Matrix-vector multiplication
 Tensor matvec(const Tensor& a, const Tensor& x) {
     check_2d(a, "A");
@@ -72,11 +162,13 @@ Tensor matvec(const Tensor& a, const Tensor& x) {
         throw std::runtime_error("matvec dimension mismatch");
     }
     
-    Tensor a_f32 = (a.dtype() == DType::F32) ? Tensor::from_data(a.data(), a.shape(), DType::F32) : a.dequantize();
-    Tensor x_f32 = (x.dtype() == DType::F32) ? Tensor::from_data(x.data(), x.shape(), DType::F32) : x.dequantize();
+    // Verify tensors are F32
+    if (a.dtype() != DType::F32 || x.dtype() != DType::F32) {
+        throw std::runtime_error("matvec: non-F32 tensors");
+    }
     
-    const float* a_data = a_f32.data_f32();
-    const float* x_data = x_f32.data_f32();
+    const float* a_data = a.data_f32();
+    const float* x_data = x.data_f32();
     
     Tensor y = Tensor::zeros({m}, DType::F32);
     float* y_data = y.data_f32();
@@ -236,35 +328,74 @@ Tensor softmax(const Tensor& x) {
 
 // RMSNorm
 Tensor rmsnorm(const Tensor& x, const Tensor& weight, float eps) {
-    if (x.shape().ndim() != 1) {
-        throw std::runtime_error("RMSNorm only supports 1D tensors for now");
+    int ndim = x.shape().ndim();
+    
+    if (ndim == 1) {
+        // 1D case: [hidden_dim]
+        int64_t n = x.shape().numel();
+        
+        if (weight.shape().numel() != n) {
+            throw std::runtime_error("RMSNorm: weight size mismatch");
+        }
+        
+        const float* x_data = x.data_f32();
+        const float* w_data = weight.data_f32();
+        
+        // Compute RMS
+        float rms = 0.0f;
+        for (int64_t i = 0; i < n; ++i) {
+            rms += x_data[i] * x_data[i];
+        }
+        rms = std::sqrt(rms / n + eps);
+        
+        // Normalize and scale
+        Tensor y = Tensor::empty(x.shape(), DType::F32);
+        float* y_data = y.data_f32();
+        
+        for (int64_t i = 0; i < n; ++i) {
+            y_data[i] = (x_data[i] / rms) * w_data[i];
+        }
+        
+        return y;
+        
+    } else if (ndim == 2) {
+        // 2D case: [seq_len, hidden_dim] - normalize along last axis
+        int64_t seq_len = x.shape().size(0);
+        int64_t hidden_dim = x.shape().size(1);
+        
+        if (weight.shape().numel() != hidden_dim) {
+            throw std::runtime_error("RMSNorm: weight size must match hidden_dim");
+        }
+        
+        const float* x_data = x.data_f32();
+        const float* w_data = weight.data_f32();
+        
+        Tensor y = Tensor::empty(x.shape(), DType::F32);
+        float* y_data = y.data_f32();
+        
+        // Process each sequence position independently
+        for (int64_t seq = 0; seq < seq_len; ++seq) {
+            // Compute RMS for this sequence position
+            float rms = 0.0f;
+            int64_t offset = seq * hidden_dim;
+            
+            for (int64_t i = 0; i < hidden_dim; ++i) {
+                float val = x_data[offset + i];
+                rms += val * val;
+            }
+            rms = std::sqrt(rms / hidden_dim + eps);
+            
+            // Normalize and scale
+            for (int64_t i = 0; i < hidden_dim; ++i) {
+                y_data[offset + i] = (x_data[offset + i] / rms) * w_data[i];
+            }
+        }
+        
+        return y;
+        
+    } else {
+        throw std::runtime_error("RMSNorm only supports 1D or 2D tensors");
     }
-    
-    int64_t n = x.shape().numel();
-    
-    if (weight.shape().numel() != n) {
-        throw std::runtime_error("RMSNorm: weight size mismatch");
-    }
-    
-    const float* x_data = x.data_f32();
-    const float* w_data = weight.data_f32();
-    
-    // Compute RMS
-    float rms = 0.0f;
-    for (int64_t i = 0; i < n; ++i) {
-        rms += x_data[i] * x_data[i];
-    }
-    rms = std::sqrt(rms / n + eps);
-    
-    // Normalize and scale
-    Tensor y = Tensor::empty(x.shape(), DType::F32);
-    float* y_data = y.data_f32();
-    
-    for (int64_t i = 0; i < n; ++i) {
-        y_data[i] = (x_data[i] / rms) * w_data[i];
-    }
-    
-    return y;
 }
 
 // Precompute RoPE frequencies

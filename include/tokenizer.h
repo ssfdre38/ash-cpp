@@ -75,7 +75,14 @@ private:
     struct Impl;
     std::unique_ptr<Impl> impl_;
     
-    // Helper: greedy tokenization (simplified)
+    // Helper: BPE tokenization (proper algorithm)
+    // Pre-splits on control tokens (<|...|>), then BPEs plain-text segments
+    std::vector<TokenID> tokenize_bpe(const std::string& text);
+    
+    // Helper: BPE tokenize a single plain-text segment (no special tokens inside)
+    std::vector<TokenID> tokenize_bpe_segment(const std::string& text);
+    
+    // Helper: greedy tokenization (fallback if no BPE merges)
     std::vector<TokenID> tokenize_greedy(const std::string& text);
     
     // Helper: byte fallback encoding

@@ -3,6 +3,7 @@
 #include <cmath>
 #include <cstring>
 #include <algorithm>
+#include <iostream>
 
 namespace ash {
 
@@ -72,8 +73,6 @@ std::pair<Tensor, Tensor> KVCache::get(int layer, int start_pos, int end_pos) {
     }
     
     auto& [k_cache, v_cache] = cache_[layer];
-    
-    // Extract slice from cache
     TensorShape shape({seq_len, n_kv_heads_, head_dim_});
     Tensor k = Tensor::empty(shape, DType::F32);
     Tensor v = Tensor::empty(shape, DType::F32);
@@ -130,10 +129,12 @@ MultiHeadAttention::~MultiHeadAttention() = default;
 
 void MultiHeadAttention::apply_rope(Tensor& xq, Tensor& xk, int pos) {
     // Apply RoPE to queries and keys
-    // Input shape: [seq_len, n_heads, head_dim]
+    // Input shape: [seq_len, n_heads, head_dim] for xq
+    //              [seq_len, n_kv_heads, head_dim] for xk (may be different for GQA)
     
     int seq_len = xq.shape().size(0);
-    int n_heads = xq.shape().size(1);
+    int n_q_heads = xq.shape().size(1);
+    int n_kv_heads = xk.shape().size(1);
     int head_dim = xq.shape().size(2);
     
     float* xq_data = xq.data_f32();
@@ -147,9 +148,10 @@ void MultiHeadAttention::apply_rope(Tensor& xq, Tensor& xk, int pos) {
     for (int seq = 0; seq < seq_len; ++seq) {
         int rope_pos = pos + seq;
         
-        for (int h = 0; h < n_heads; ++h) {
+        // Apply to queries
+        for (int h = 0; h < n_q_heads; ++h) {
             for (int i = 0; i < half_dim; ++i) {
-                int idx = seq * n_heads * head_dim + h * head_dim;
+                int idx = seq * n_q_heads * head_dim + h * head_dim;
                 
                 float cos_val = cos_data[rope_pos * half_dim + i];
                 float sin_val = sin_data[rope_pos * half_dim + i];
@@ -159,6 +161,16 @@ void MultiHeadAttention::apply_rope(Tensor& xq, Tensor& xk, int pos) {
                 float q_odd = xq_data[idx + 2*i + 1];
                 xq_data[idx + 2*i] = q_even * cos_val - q_odd * sin_val;
                 xq_data[idx + 2*i + 1] = q_even * sin_val + q_odd * cos_val;
+            }
+        }
+        
+        // Apply to keys (separate loop for different head count)
+        for (int h = 0; h < n_kv_heads; ++h) {
+            for (int i = 0; i < half_dim; ++i) {
+                int idx = seq * n_kv_heads * head_dim + h * head_dim;
+                
+                float cos_val = cos_data[rope_pos * half_dim + i];
+                float sin_val = sin_data[rope_pos * half_dim + i];
                 
                 // Apply rotation to key
                 float k_even = xk_data[idx + 2*i];
@@ -202,16 +214,22 @@ Tensor MultiHeadAttention::repeat_kv(const Tensor& x, int n_rep) {
     return out;
 }
 
-Tensor MultiHeadAttention::compute_attention(const Tensor& q, const Tensor& k, const Tensor& v) {
+Tensor MultiHeadAttention::compute_attention(const Tensor& q, const Tensor& k, const Tensor& v, int start_pos, const std::string& arch) {
     // Simplified attention computation
     // q: [seq_q, n_heads, head_dim]
     // k: [seq_k, n_heads, head_dim]
     // v: [seq_k, n_heads, head_dim]
+    // start_pos: Absolute position of first query in the full sequence
     
     int seq_q = q.shape().size(0);
     int seq_k = k.shape().size(0);
     int n_heads = q.shape().size(1);
     int head_dim = q.shape().size(2);
+    
+    Logger::instance().debug("compute_attention: seq_q=" + std::to_string(seq_q) + 
+                           ", seq_k=" + std::to_string(seq_k) + 
+                           ", n_heads=" + std::to_string(n_heads) + 
+                           ", head_dim=" + std::to_string(head_dim));
     
     // For now, simplified single-head computation
     // TODO: Proper batched multi-head attention
@@ -241,7 +259,23 @@ Tensor MultiHeadAttention::compute_attention(const Tensor& q, const Tensor& k, c
                     int k_idx = j * n_heads * head_dim + h * head_dim + d;
                     dot += q_data[q_idx] * k_data[k_idx];
                 }
-                scores[i * seq_k + j] = dot * scale;
+                
+                // Scale attention scores
+                float scaled_score = dot * scale;
+                
+                // Gemma requirement: logit soft-capping
+                if (arch == "gemma") {
+                    const float SOFT_CAP = 50.0f;
+                    scaled_score = SOFT_CAP * std::tanh(scaled_score / SOFT_CAP);
+                }
+                
+                // Apply causal masking using absolute positions
+                int abs_q_pos = start_pos + i;
+                if (j > abs_q_pos) {
+                    scores[i * seq_k + j] = -INFINITY;
+                } else {
+                    scores[i * seq_k + j] = scaled_score;
+                }
             }
         }
         
@@ -266,7 +300,7 @@ Tensor MultiHeadAttention::compute_attention(const Tensor& q, const Tensor& k, c
             }
         }
         
-        // Compute weighted sum: scores @ V
+        // Compute attention output: weighted sum of values
         for (int i = 0; i < seq_q; ++i) {
             for (int d = 0; d < head_dim; ++d) {
                 float val = 0.0f;
@@ -289,49 +323,166 @@ Tensor MultiHeadAttention::forward(
     const Tensor& wk,
     const Tensor& wv,
     const Tensor& wo,
+    const Tensor& bq,
+    const Tensor& bk,
+    const Tensor& bv,
+    int layer_idx,
     int pos,
     KVCache* kv_cache
 ) {
+    Logger::instance().debug("attention::forward layer " + std::to_string(layer_idx));
     int seq_len = x.shape().size(0);
     int hidden_dim = x.shape().size(1);
     
-    // Project to Q, K, V
-    // x: [seq_len, hidden_dim]
-    // wq, wk, wv: [hidden_dim, ?]
+    Logger::instance().debug("Projecting Q, K, V...");
     
-    Tensor xq = matmul(x, wq);  // [seq_len, hidden_dim]
-    Tensor xk = matmul(x, wk);  // [seq_len, kv_dim]
-    Tensor xv = matmul(x, wv);  // [seq_len, kv_dim]
+    // Project to Q, K, V using optimized transpose
+    // x: [seq_len, hidden_dim] = [424, 2560]
+    // wq, wk, wv stored as [out_features, in_features] in GGUF
+    // We need: x @ wq^T efficiently (no temp allocation)
+    
+    Tensor xq = matmul_transposed(x, wq, false, true);  // x @ wq^T -> [seq_len, n_q_heads * head_dim]
+    if (bq.is_allocated()) {
+        // Add bias: xq += bq (broadcast across seq_len dimension)
+        const float* bq_data = bq.data_f32();
+        float* xq_data = xq.data_f32();
+        int qkv_dim = xq.shape().size(1);  // n_q_heads * head_dim
+        for (int s = 0; s < seq_len; ++s) {
+            for (int d = 0; d < qkv_dim; ++d) {
+                xq_data[s * qkv_dim + d] += bq_data[d];
+            }
+        }
+    }
+    Logger::instance().debug("Q projection done");
+    
+    Tensor xk = matmul_transposed(x, wk, false, true);  // x @ wk^T -> [seq_len, n_kv_heads * head_dim]
+    if (bk.is_allocated()) {
+        // Add bias: xk += bk (broadcast across seq_len dimension)
+        const float* bk_data = bk.data_f32();
+        float* xk_data = xk.data_f32();
+        int kv_dim = xk.shape().size(1);  // n_kv_heads * head_dim
+        for (int s = 0; s < seq_len; ++s) {
+            for (int d = 0; d < kv_dim; ++d) {
+                xk_data[s * kv_dim + d] += bk_data[d];
+            }
+        }
+    }
+    Logger::instance().debug("K projection done");
+    
+    Tensor xv = matmul_transposed(x, wv, false, true);// x @ wv^T -> [seq_len, n_kv_heads * head_dim]
+    if (bv.is_allocated()) {
+        // Add bias: xv += bv (broadcast across seq_len dimension)
+        const float* bv_data = bv.data_f32();
+        float* xv_data = xv.data_f32();
+        int kv_dim = xv.shape().size(1);  // n_kv_heads * head_dim
+        for (int s = 0; s < seq_len; ++s) {
+            for (int d = 0; d < kv_dim; ++d) {
+                xv_data[s * kv_dim + d] += bv_data[d];
+            }
+        }
+    }
+    Logger::instance().debug("V projection done");
     
     // Reshape to heads: [seq_len, n_heads, head_dim]
+    Logger::instance().debug("Splitting heads...");
     xq = attention_utils::split_heads(xq, config_.n_heads, config_.head_dim);
+    Logger::instance().debug("Q heads split");
     xk = attention_utils::split_heads(xk, config_.n_kv_heads, config_.head_dim);
+    Logger::instance().debug("K heads split");
     xv = attention_utils::split_heads(xv, config_.n_kv_heads, config_.head_dim);
+    Logger::instance().debug("V heads split");
     
     // Apply RoPE
+    Logger::instance().debug("Applying RoPE...");
     apply_rope(xq, xk, pos);
     
-    // Handle KV cache
-    Tensor keys = std::move(xk);
-    Tensor values = std::move(xv);
+    // CRITICAL FIX: KV cache integration
+    // For autoregressive generation, we cache past K,V and only compute new ones
+    Tensor keys, values;
     
-    // TODO: KV cache integration (for now just use current keys/values)
+    // Determine if this is prefill (seq_len > 1) or generation (seq_len == 1)
+    bool is_generation = (seq_len == 1);
+    
+    bool use_cache = (kv_cache != nullptr && kv_cache->seq_len() > 0 && is_generation);
+    
+    if (use_cache) {
+        // Generation phase: we have past K,V and are adding one new token
+        // CRITICAL FIX: Use 'pos' (the position we're generating at) instead of kv_cache->seq_len()
+        // because seq_len() is a global counter that increments as each layer writes!
+        // We want the cache length BEFORE this generation step.
+        int cache_len = pos;  // Position 5 means we have cached 0-4 (5 entries)
+        
+        // 1. Get past K,V from cache (positions 0 to cache_len-1)
+        auto [past_k, past_v] = kv_cache->get(layer_idx, 0, cache_len);
+        
+        // 2. Concatenate past + new: [cache_len + 1, n_kv_heads, head_dim]
+        keys = attention_utils::concat_tensors(past_k, xk, 0);
+        values = attention_utils::concat_tensors(past_v, xv, 0);
+        
+        // 3. Store new K,V into cache
+        Tensor k_slice = attention_utils::slice_tensor(xk, 0, 1, 0);
+        Tensor v_slice = attention_utils::slice_tensor(xv, 0, 1, 0);
+        
+        kv_cache->update(layer_idx, pos, k_slice, v_slice);
+    } else {
+        // Prefill phase: store all K,V positions, no concat
+        if (kv_cache != nullptr) {
+            for (int i = 0; i < seq_len; ++i) {
+                Tensor k_slice = attention_utils::slice_tensor(xk, i, i+1, 0);
+                Tensor v_slice = attention_utils::slice_tensor(xv, i, i+1, 0);
+                kv_cache->update(layer_idx, pos + i, k_slice, v_slice);
+            }
+        }
+        
+        // Use current K,V directly (no concat)
+        keys = std::move(xk);
+        values = std::move(xv);
+    }
     
     // Repeat KV for GQA if needed
     if (config_.is_gqa()) {
         int n_rep = config_.n_heads / config_.n_kv_heads;
+        
         keys = repeat_kv(keys, n_rep);
         values = repeat_kv(values, n_rep);
     }
     
+    // CRITICAL: Assert invariants before attention computation
+    if (is_generation) {
+        // During generation: seq_q must be 1, seq_k must be pos+1
+        if (xq.shape().size(0) != 1) {
+            throw std::runtime_error("Generation: seq_q must be 1");
+        }
+        if (keys.shape().size(0) != pos + 1) {
+            throw std::runtime_error("Generation: seq_k must be pos+1 (got " + 
+                std::to_string(keys.shape().size(0)) + " expected " + std::to_string(pos + 1) + ")");
+        }
+    }
+    
+    // Assert K/V shapes match expected dimensions after repeat_kv
+    if (keys.shape().size(1) != config_.n_heads) {
+        throw std::runtime_error("Keys n_heads mismatch");
+    }
+    if (keys.shape().size(2) != config_.head_dim) {
+        throw std::runtime_error("Keys head_dim mismatch");
+    }
+    if (values.shape().size(1) != config_.n_heads) {
+        throw std::runtime_error("Values n_heads mismatch");
+    }
+    if (values.shape().size(2) != config_.head_dim) {
+        throw std::runtime_error("Values head_dim mismatch");
+    }
+    
     // Compute attention
-    Tensor attn_output = compute_attention(xq, keys, values);
+    Tensor attn_output = compute_attention(xq, keys, values, pos, config_.architecture);
     
     // Merge heads back: [seq_len, n_heads, head_dim] -> [seq_len, hidden_dim]
     Tensor merged = attention_utils::merge_heads(attn_output);
     
-    // Output projection
-    Tensor output = matmul(merged, wo);
+    // Output projection: merged @ wo^T
+    // wo is stored as [hidden_dim, hidden_dim] in GGUF
+    // We need: merged[seq_len, hidden_dim] @ wo^T[hidden_dim, hidden_dim] = [seq_len, hidden_dim]
+    Tensor output = matmul_transposed(merged, wo, false, true);
     
     return output;
 }
@@ -406,6 +557,85 @@ Tensor transpose_for_scores(const Tensor& x) {
             }
         }
     }
+    
+    return out;
+}
+
+Tensor concat_tensors(const Tensor& a, const Tensor& b, int dim) {
+    // Concatenate two tensors along dimension `dim`
+    // For KV cache: dim=0 (sequence dimension)
+    // a: [seq_a, n_heads, head_dim]
+    // b: [seq_b, n_heads, head_dim]
+    // out: [seq_a + seq_b, n_heads, head_dim]
+    
+    if (dim != 0) {
+        throw std::runtime_error("concat_tensors only supports dim=0");
+    }
+    
+    // CRITICAL: Validate shapes match exactly (except concat dimension)
+    if (a.dtype() != b.dtype()) {
+        throw std::runtime_error("concat_tensors: dtype mismatch");
+    }
+    if (a.shape().ndim() != b.shape().ndim()) {
+        throw std::runtime_error("concat_tensors: rank mismatch");
+    }
+    if (a.shape().size(1) != b.shape().size(1)) {
+        throw std::runtime_error("concat_tensors: dimension 1 mismatch (n_heads)");
+    }
+    if (a.shape().size(2) != b.shape().size(2)) {
+        throw std::runtime_error("concat_tensors: dimension 2 mismatch (head_dim)");
+    }
+    
+    int seq_a = a.shape().size(0);
+    int seq_b = b.shape().size(0);
+    int n_heads = a.shape().size(1);
+    int head_dim = a.shape().size(2);
+    
+    Tensor out = Tensor::empty({seq_a + seq_b, n_heads, head_dim}, DType::F32);
+    
+    const float* a_data = a.data_f32();
+    const float* b_data = b.data_f32();
+    float* out_data = out.data_f32();
+    
+    // Copy a first
+    int a_size = seq_a * n_heads * head_dim;
+    std::memcpy(out_data, a_data, a_size * sizeof(float));
+    
+    // Copy b after a
+    int b_size = seq_b * n_heads * head_dim;
+    std::memcpy(out_data + a_size, b_data, b_size * sizeof(float));
+    
+    return out;
+}
+
+Tensor slice_tensor(const Tensor& x, int start, int end, int dim) {
+    // Extract slice [start:end) along dimension `dim`
+    // For KV cache: dim=0 (sequence dimension)
+    // x: [seq_len, n_heads, head_dim]
+    // out: [end-start, n_heads, head_dim]
+    
+    if (dim != 0) {
+        throw std::runtime_error("slice_tensor only supports dim=0");
+    }
+    
+    int seq_len = x.shape().size(0);
+    int n_heads = x.shape().size(1);
+    int head_dim = x.shape().size(2);
+    
+    if (start < 0 || end > seq_len || start >= end) {
+        throw std::runtime_error("slice_tensor: invalid range");
+    }
+    
+    int slice_len = end - start;
+    Tensor out = Tensor::empty({slice_len, n_heads, head_dim}, DType::F32);
+    
+    const float* x_data = x.data_f32();
+    float* out_data = out.data_f32();
+    
+    int offset = start * n_heads * head_dim;
+    int size = slice_len * n_heads * head_dim;
+    
+    std::memcpy(out_data, x_data + offset, size * sizeof(float));
     
     return out;
 }

@@ -9,6 +9,11 @@ namespace ash {
 // A: [m, k], B: [k, n] -> C: [m, n]
 Tensor matmul(const Tensor& a, const Tensor& b);
 
+// Matrix multiplication with optional transpose: C = A @ B^T or A^T @ B
+// transpose_b=true: A @ B^T where B is [n, k] -> C: [m, n]
+// This is faster than explicit transpose + matmul (no extra allocation)
+Tensor matmul_transposed(const Tensor& a, const Tensor& b, bool transpose_a = false, bool transpose_b = false);
+
 // Matrix-vector multiplication: y = A @ x
 // A: [m, k], x: [k] -> y: [m]
 Tensor matvec(const Tensor& a, const Tensor& x);

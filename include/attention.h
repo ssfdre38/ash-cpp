@@ -49,6 +49,7 @@ struct AttentionConfig {
     int max_seq_len;       // Maximum sequence length
     float rope_theta;      // RoPE frequency base (10000 for Gemma)
     bool use_kv_cache;     // Enable KV caching for generation
+    std::string architecture; // Model architecture (e.g., "qwen2", "gemma")
     
     int hidden_dim() const { return n_heads * head_dim; }
     int kv_dim() const { return n_kv_heads * head_dim; }
@@ -71,6 +72,10 @@ public:
         const Tensor& wk,      // Key weights [hidden_dim, kv_dim]
         const Tensor& wv,      // Value weights [hidden_dim, kv_dim]
         const Tensor& wo,      // Output weights [hidden_dim, hidden_dim]
+        const Tensor& bq,      // Query bias (optional)
+        const Tensor& bk,      // Key bias (optional)
+        const Tensor& bv,      // Value bias (optional)
+        int layer_idx = 0,
         int pos = 0,
         KVCache* kv_cache = nullptr
     );
@@ -92,7 +97,9 @@ private:
     Tensor compute_attention(
         const Tensor& q,  // [seq_len, n_heads, head_dim]
         const Tensor& k,  // [seq_len_k, n_kv_heads, head_dim]
-        const Tensor& v   // [seq_len_k, n_kv_heads, head_dim]
+        const Tensor& v,  // [seq_len_k, n_kv_heads, head_dim]
+        int start_pos = 0, // Absolute start position of Q in the full sequence
+        const std::string& arch = "" // Model architecture for specific rules
     );
     
     // Helper: repeat KV heads for GQA
@@ -118,6 +125,16 @@ namespace attention_utils {
     // Transpose for attention (swap seq_len and n_heads dims)
     // [seq_len, n_heads, head_dim] -> [n_heads, seq_len, head_dim]
     Tensor transpose_for_scores(const Tensor& x);
+    
+    // Concatenate two tensors along a dimension (for KV cache)
+    // Input: a=[seq_a, ...], b=[seq_b, ...], dim=0
+    // Output: [seq_a + seq_b, ...]
+    Tensor concat_tensors(const Tensor& a, const Tensor& b, int dim);
+    
+    // Slice tensor along a dimension (for KV cache)
+    // Input: x=[seq_len, ...], start, end, dim=0
+    // Output: [end-start, ...]
+    Tensor slice_tensor(const Tensor& x, int start, int end, int dim);
 }
 
 } // namespace ash
